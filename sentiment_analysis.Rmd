@@ -1,0 +1,283 @@
+---
+title: "WhatsApp Chat Sentiment Analysis"
+author: "Alexander Oswald"
+date: "2025-03-24"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+# Load required libraries
+library(tidyverse)
+library(lubridate)
+
+# Read the chat file
+file_path <- paste0(Sys.getenv("WHATSAPP_TEXTS_DIR"),"_chat.txt")  # Change to the correct file path
+lines <- readLines(file_path, encoding = "UTF-8")
+
+# Extract timestamp, sender, and message using regex
+chat_df <- tibble(
+  raw_text = lines
+) %>%
+  mutate(
+    Date = str_extract(raw_text, "\\d{4}-\\d{2}-\\d{2}"),
+    Time = str_extract(raw_text, "\\d{1,2}:\\d{2}:\\d{2} [APM]+"),
+    Sender = str_extract(raw_text, "(?<=\\])\\s*[^:]+"),
+    Message = str_extract(raw_text, "(?<=: ).+")
+  ) %>%
+  drop_na(Date, Sender, Message) %>%
+  mutate(Date = as.Date(Date, format="%Y-%m-%d"))
+
+# View first few rows
+head(chat_df)
+```
+
+## R Markdown
+
+This is an R Markdown presentation. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document.
+
+## Slide with Bullets
+
+- Bullet 1
+- Bullet 2
+- Bullet 3
+
+## Slide with R Output
+
+```{r Perform Sentiment Analysis, echo = TRUE}
+library(syuzhet)
+
+# Get sentiment scores
+chat_df <- chat_df %>%
+  mutate(
+    Sentiment_Score = get_sentiment(Message, method="bing"),
+    Sentiment = case_when(
+      Sentiment_Score > 0 ~ "Positive",
+      Sentiment_Score < 0 ~ "Negative",
+      TRUE ~ "Neutral"
+    )
+  )
+
+# View sentiment distribution
+table(chat_df$Sentiment)
+
+# Plot sentiment trends over time
+chat_df %>%
+  group_by(Date, Sentiment) %>%
+  summarise(Count = n()) %>%
+  ggplot(aes(x = Date, y = Count, color = Sentiment)) +
+  geom_line() +
+  labs(title = "Sentiment Trend Over Time", x = "Date", y = "Count of Messages") +
+  theme_minimal()
+```
+
+## Detecting Abusive Messages
+
+```{r Detect Abusive Messages}
+# Define abusive keywords
+abusive_keywords <- c("shut up", "idiot", "moron", "lazy", "selfish", "disrespect", 
+                      "you never", "you always", "it's your fault", "stop texting me", 
+                      "fk", "fuck", "annoying", "do not ever", "you're atrocious", 
+                      "you're speaking with emotions", "are you a kid", "prove it")
+
+# Flag abusive messages
+chat_df <- chat_df %>%
+  mutate(Abusive = if_else(str_detect(tolower(Message), paste(abusive_keywords, collapse="|")), TRUE, FALSE))
+
+# View abusive messages
+abusive_messages <- chat_df %>% filter(Abusive == TRUE)
+print(abusive_messages)
+
+# Plot abusive message trends over time
+abusive_trend <- chat_df %>%
+  group_by(Date) %>%
+  summarise(Abusive_Count = sum(Abusive))
+
+ggplot(abusive_trend, aes(x = Date, y = Abusive_Count)) +
+  geom_line(color="red") +
+  labs(title = "Abusive Messages Over Time", x = "Date", y = "Count of Abusive Messages") +
+  theme_minimal()
+
+```
+
+## Check Word Cloud for Context
+```{r Word Cloud Creation}
+library(tidytext)
+library(ggwordcloud)
+library(gridExtra)
+
+# Collapse messages by sender into a single text
+messages_by_sender <- df %>%
+  group_by(Sender) %>%
+  summarise(all_text = paste(Message, collapse = " "), .groups = "drop")
+
+# Tokenize and count words for each sender
+word_counts <- messages_by_sender %>%
+  unnest_tokens(word, all_text) %>%
+  count(Sender, word, sort = TRUE)
+
+# Split into separate data frames per sender
+sender_list <- unique(word_counts$Sender)
+wordclouds <- list()
+
+for (sender in sender_list) {
+  wordcloud_plot <- word_counts %>%
+    filter(Sender == sender) %>%
+    ggplot(aes(label = word, size = n)) +
+    geom_text_wordcloud_area() +
+    theme_minimal() +
+    ggtitle(paste("Word Cloud for", sender))
+
+  wordclouds[[sender]] <- wordcloud_plot
+}
+
+# Display side-by-side (adjust to number of senders)
+do.call(grid.arrange, c(wordclouds, ncol = length(wordclouds)))
+```
+
+```{r Identify Negative Responsives to abusive messages}
+# Identify cases where Alex responds negatively to an abusive message from Sun Shuo Pershing
+reaction_patterns <- df %>%
+  filter(
+    Sender == "Alex",
+    Sentiment == "Negative",
+    Previous_Sender == "Sun Shuo Pershing",
+    Previous_Abusive == TRUE
+  )
+
+# Display reaction-based patterns
+print(reaction_patterns)
+```
+
+```{r Identify Negative Responsives to abusive messages}
+# Identify cases where Alex responds negatively to an abusive message from Sun Shuo Pershing
+reaction_patterns <- df %>%
+  filter(
+    Sender == "Alex",
+    Sentiment == "Negative",
+    Previous_Sender == "Sun Shuo Pershing",
+    Previous_Abusive == TRUE
+  )
+
+# Display reaction-based patterns
+print(reaction_patterns)
+```
+
+## Define Categorization
+```{r Categorizations}
+library(tidyverse)
+library(stringr)
+
+# Define keyword lists
+abusive_keywords     <- c("abuse", "idiot", "stupid", "hate", "shut up")  # Define this ahead of time
+positive_keywords    <- c("love", "thanks", "appreciate", "good job", "well done", "proud", "happy", "yay", "❤️")
+neutral_keywords     <- c("hi", "hello", "how are you", "what's up", "okay", "good", "👍🏼", "nice", "cool", "haha", "lol")
+task_keywords        <- c("pick up", "bring", "buy", "appointment", "meeting", "schedule", "cook", "walk", "clean", "fix")
+conflict_keywords    <- c("no", "disagree", "not true", "wrong", "but", "i don't think", "you didn't", "why")
+request_keywords     <- c("please", "can you", "should", "need to", "have to", "must", "do it", "go get", "bring me")
+apology_keywords     <- c("sorry", "apologize", "my bad", "forgive", "i messed up", "i was wrong")
+info_keywords        <- c("sent", "emailed", "update", "news", "info", "details", "link", "check", "read")
+humor_keywords       <- c("joking", "lol", "haha", "funny", "meme", "sarcastic", "lmao")
+
+# Function to categorize a message
+categorize_message <- function(text) {
+  text <- tolower(text)
+
+  if (any(str_detect(text, fixed(abusive_keywords)))) {
+    return("Abusive")
+  } else if (any(str_detect(text, fixed(positive_keywords)))) {
+    return("Supportive/Positive")
+  } else if (any(str_detect(text, fixed(neutral_keywords)))) {
+    return("Neutral/Chit-chat")
+  } else if (any(str_detect(text, fixed(task_keywords)))) {
+    return("Task-Oriented")
+  } else if (any(str_detect(text, fixed(conflict_keywords)))) {
+    return("Disagreements/Conflict")
+  } else if (any(str_detect(text, fixed(request_keywords)))) {
+    return("Requests/Commands")
+  } else if (any(str_detect(text, fixed(apology_keywords)))) {
+    return("Apologies/Repair Attempts")
+  } else if (any(str_detect(text, fixed(info_keywords)))) {
+    return("Information Sharing")
+  } else if (any(str_detect(text, fixed(humor_keywords)))) {
+    return("Humor/Sarcasm")
+  } else {
+    return("Neutral/Chit-chat")
+  }
+}
+
+# Apply the categorization function to the dataframe
+df <- df %>%
+  mutate(Category = map_chr(Message, categorize_message))
+
+# View categorized messages (in RStudio)
+df %>% view("Categorized Messages")
+
+# Plot category distribution
+df %>%
+  count(Category) %>%
+  ggplot(aes(x = fct_reorder(Category, n), y = n)) +
+  geom_col(fill = "skyblue") +
+  coord_flip() +
+  labs(
+    title = "Distribution of Message Categories",
+    x = "Category",
+    y = "Count of Messages"
+  ) +
+  theme_minimal()
+
+# Remove "Neutral/Chit-chat" column if it exists
+filtered_category_by_sender <- category_by_sender %>%
+  select(-`Neutral/Chit-chat`)
+
+# View filtered data
+filtered_category_by_sender %>% view("Filtered Category Distribution by Sender")
+
+# Convert to long format for stacked bar plot
+long_filtered <- filtered_category_by_sender %>%
+  rownames_to_column("Sender") %>%  # If Sender was in row names
+  pivot_longer(-Sender, names_to = "Category", values_to = "Count")
+
+# Plot
+ggplot(long_filtered, aes(x = Sender, y = Count, fill = Category)) +
+  geom_col(position = "stack") +
+  labs(
+    title = "Message Category Distribution by Sender (Excluding Neutral/Chit-chat)",
+    x = "Sender",
+    y = "Count of Messages",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )# Remove "Neutral/Chit-chat" column if it exists
+filtered_category_by_sender <- category_by_sender %>%
+  select(-`Neutral/Chit-chat`)
+
+# View filtered data
+filtered_category_by_sender %>% view("Filtered Category Distribution by Sender")
+
+# Convert to long format for stacked bar plot
+long_filtered <- filtered_category_by_sender %>%
+  rownames_to_column("Sender") %>%  # If Sender was in row names
+  pivot_longer(-Sender, names_to = "Category", values_to = "Count")
+
+# Plot
+ggplot(long_filtered, aes(x = Sender, y = Count, fill = Category)) +
+  geom_col(position = "stack") +
+  labs(
+    title = "Message Category Distribution by Sender (Excluding Neutral/Chit-chat)",
+    x = "Sender",
+    y = "Count of Messages",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
